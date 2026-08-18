@@ -122,8 +122,8 @@ def build_chat_reconnect(uuid: str, username: str, public_key: str) -> dict:
 def build_chat_accept(uuid: str, username: str, public_key: str) -> dict:
     return {"type": MsgType.CHAT_ACCEPT, "uuid": uuid, "username": username, "public_key": public_key}
 
-def build_chat_decline(uuid: str) -> dict:
-    return {"type": MsgType.CHAT_DECLINE, "uuid": uuid}
+def build_chat_decline(uuid: str, reason: str = "") -> dict:
+    return {"type": MsgType.CHAT_DECLINE, "uuid": uuid, "reason": reason}
 
 def build_chat_end() -> dict:
     return {"type": MsgType.CHAT_END}

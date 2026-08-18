@@ -176,7 +176,7 @@ class ChatSession:
                             if main.cfg is None: break
                             peer_tcp_port = main.registry.get_by_ip(self.peer_ip).get("tcp_port", 9877) if main.registry.get_by_ip(self.peer_ip) else 9877
                             
-                            sock, dkey = connect_to_peer(self.peer_ip, peer_tcp_port, main.cfg, is_reconnect=True)
+                            sock, dkey, _ = connect_to_peer(self.peer_ip, peer_tcp_port, main.cfg, is_reconnect=True)
                             if sock:
                                 self.swap_socket(sock, dkey)
                                 ui.print_success("Reconnected successfully!")
@@ -332,10 +332,10 @@ class ChatServer(threading.Thread):
 def connect_to_peer(peer_ip: str, peer_tcp_port: int,
                     cfg: config.UserConfig,
                     timeout: float = 15.0,
-                    is_reconnect: bool = False) -> tuple[socket.socket, bytes] | tuple[None, None]:
+                    is_reconnect: bool = False) -> tuple[socket.socket, bytes, str] | tuple[None, None, str]:
     """Open a TCP connection to *peer*, send CHAT_REQUEST, wait for reply.
 
-    Returns (sock, derived_key) on CHAT_ACCEPT, or (None, None) on decline / error.
+    Returns (sock, derived_key, reason) on CHAT_ACCEPT, or (None, None, reason) on decline / error.
     """
     try:
         from protocol import build_chat_reconnect
@@ -349,16 +349,19 @@ def connect_to_peer(peer_ip: str, peer_tcp_port: int,
 
         reply = recv_message(sock)
         if reply and reply.get("type") == MsgType.CHAT_ACCEPT:
-            peer_pubkey = reply.get("public_key", "")
-            derived_key = _derive_key(cfg.private_key, peer_pubkey)
+            derived_key = _derive_key(cfg.private_key, reply.get("public_key", ""))
             sock.settimeout(None)
-            return sock, derived_key
+            return sock, derived_key, ""
+        elif reply and reply.get("type") == MsgType.CHAT_DECLINE:
+            reason = reply.get("reason", "declined")
+            sock.close()
+            return None, None, reason
         else:
-            reason = "declined" if reply else "no response"
+            reason = "no response"
             ui.print_system(f"Chat request {reason}.")
             sock.close()
-            return None, None
+            return None, None, reason
 
     except (OSError, ConnectionError) as e:
         ui.print_error(f"Could not connect: {e}")
-        return None, None
+        return None, None, str(e)

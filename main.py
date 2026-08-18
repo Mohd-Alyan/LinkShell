@@ -92,8 +92,14 @@ def on_chat_request(conn, addr, peer_uuid: str, peer_username: str, peer_pubkey:
     with session_lock:
         if active_session is not None:
             # Already in a chat — decline automatically
-            ui.print_system(f"{peer_username} tried to chat, but you're busy.")
-            return False
+            from protocol import send_message, build_chat_decline
+            try:
+                send_message(conn, build_chat_decline(cfg.uuid, reason="busy"))
+            except:
+                pass
+            conn.close()
+            ui.print_notification(f"{peer_username} requested you for a chat! Please leave the current chat to join.")
+            return None
 
     with _pending_lock:
         if _pending_request is not None:
@@ -309,10 +315,14 @@ def main_menu():
             ui.print_system(
                 f"Sending chat request to {peer['username']}@{peer['ip']} …"
             )
-            sock, derived_key = connect_to_peer(
+            sock, derived_key, reason = connect_to_peer(
                 peer["ip"], peer["tcp_port"], cfg
             )
             if sock is None:
+                if reason == "busy":
+                    ui.print_system(f"{peer['username']} is busy. Your request was sent, please wait.")
+                else:
+                    ui.print_error("Chat request declined.")
                 time.sleep(2)
                 continue
 
