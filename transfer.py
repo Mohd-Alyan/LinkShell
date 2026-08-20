@@ -1,21 +1,17 @@
 """
 transfer.py — File send / receive over an active TCP chat socket.
-
 Sending:
   1. FILE_META  →  {filename, filesize}
   2. FILE_DATA  →  {data: base64}   (repeated, 64 KB chunks)
   3. FILE_END   →  {}
   4. ← FILE_ACK  {status}
-
 Receiving is driven by the chat session's message loop — it calls
 ``receive_file()`` when it sees a FILE_META message.
 """
-
 import base64
 import os
 import hashlib
 from pathlib import Path
-
 from protocol import (
     send_message,
     recv_message,
@@ -26,49 +22,32 @@ from protocol import (
     MsgType,
 )
 import ui
-
-CHUNK_SIZE = 64 * 1024          # 64 KB
-MAX_FILE_SIZE = 100 * 1024 * 1024   # 100 MB
-
-MAX_FILE_SIZE = 100 * 1024 * 1024   # 100 MB
-
-
+CHUNK_SIZE = 64 * 1024
+MAX_FILE_SIZE = 100 * 1024 * 1024
+MAX_FILE_SIZE = 100 * 1024 * 1024
 def send_file(session, filepath: str) -> bool:
     """Send a file over *session.sock*.  Returns True on success."""
     path = Path(filepath)
-
     if not path.is_file():
         ui.print_error(f"File not found: {filepath}")
         return False
-
     size = path.stat().st_size
     if size > MAX_FILE_SIZE:
         ui.print_error(f"File too large ({size / 1024 / 1024:.1f} MB). "
                        f"Max is {MAX_FILE_SIZE / 1024 / 1024:.0f} MB.")
         return False
-
     filename = path.name
-
-    # Reset events
     session.file_reply_event.clear()
     session.file_reply = None
     session.file_ack_event.clear()
-
-    # 1. Send metadata
     send_message(session.sock, build_file_meta(filename, size), session.derived_key)
     ui.print_system(f"Waiting for {session.peer_name} to accept the file...")
-
-    # Wait for ACCEPT/DECLINE
-    # 60s timeout for waiting
     if not session.file_reply_event.wait(60):
         ui.print_error("File transfer timed out waiting for reply")
         return False
-        
     if session.file_reply != "ACCEPT":
         ui.print_error(f"File transfer declined by {session.peer_name}")
         return False
-
-    # 2. Send data chunks
     sent = session.file_reply_offset
     file_hash = hashlib.sha256()
     try:
@@ -86,33 +65,22 @@ def send_file(session, filepath: str) -> bool:
     except OSError as e:
         ui.print_error(f"Read error: {e}")
         return False
-
-    # 3. Send end marker with checksum
     send_message(session.sock, build_file_end(file_hash.hexdigest()), session.derived_key)
-
-    # 4. Wait for ACK from the background thread via event
     if session.file_ack_event.wait(30):
         ui.print_success(f"File sent: {filename} "
                          f"({size / 1024 / 1024:.1f} MB)")
         return True
-
     ui.print_error("No acknowledgement received")
     return False
-
-
 def receive_file(sock, meta: dict, sender_name: str, derived_key: bytes | None, offset: int = 0) -> bool:
     """Receive a file after FILE_META has already been parsed.
-
     Reads FILE_DATA chunks from *sock* until FILE_END, then sends FILE_ACK.
     Returns True on success.
     """
     filename = meta.get("filename", "unknown")
     filesize = meta.get("filesize", 0)
-
     receive_dir = Path.home() / "Downloads" / "linkshell" / sender_name
     receive_dir.mkdir(parents=True, exist_ok=True)
-
-    # Avoid overwriting — add a suffix if needed ONLY if we are not resuming
     dest = receive_dir / filename
     if offset == 0:
         counter = 1
@@ -121,7 +89,6 @@ def receive_file(sock, meta: dict, sender_name: str, derived_key: bytes | None, 
             suffix = Path(filename).suffix
             dest = receive_dir / f"{stem}_{counter}{suffix}"
             counter += 1
-
     received = offset
     file_hash = hashlib.sha256()
     mode = "ab" if offset > 0 else "wb"
@@ -132,9 +99,7 @@ def receive_file(sock, meta: dict, sender_name: str, derived_key: bytes | None, 
                 if msg is None:
                     ui.print_error("Connection lost during file transfer")
                     return False
-
                 msg_type = msg.get("type")
-
                 if msg_type == MsgType.FILE_DATA:
                     chunk = base64.b64decode(msg["data"])
                     file_hash.update(chunk)
@@ -142,7 +107,6 @@ def receive_file(sock, meta: dict, sender_name: str, derived_key: bytes | None, 
                     received += len(chunk)
                     ui.print_progress(f"Receiving {filename}", received,
                                       filesize or received)
-
                 elif msg_type == MsgType.FILE_END:
                     expected_checksum = msg.get("checksum", "")
                     if expected_checksum and expected_checksum != file_hash.hexdigest():
@@ -152,23 +116,17 @@ def receive_file(sock, meta: dict, sender_name: str, derived_key: bytes | None, 
                         except OSError:
                             pass
                         f.close()
-                        dest.unlink() # Delete corrupted file
+                        dest.unlink()
                         return False
                     break
-
                 else:
-                    # Unexpected message type during transfer — skip
                     continue
-
     except OSError as e:
         ui.print_error(f"Write error: {e}")
         return False
-
-    # Send ACK
     try:
         send_message(sock, build_file_ack("received"), derived_key)
     except OSError:
         pass
-
     ui.print_success(f"File received: {dest.name} → {dest}")
     return True
